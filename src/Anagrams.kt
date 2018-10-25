@@ -20,17 +20,24 @@ class Anagrams : Configured(), Tool {
 		private val key = Text()
 		private val value = IntWritable(1)
 
-		override fun map(key: Any, value: Text, context: Context) =
-				StringTokenizer(value.toString()).iterator().forEach {
-					this.key.set(it.toString())
-					context.write(this.key, this.value)
-				}
+		override fun map(key: Any, value: Text, context: Context) {
+			value
+					.toString()
+					.split("[^\\w]".toRegex())
+					.asSequence()
+					.filterNot { it.length == 1 || it.matches(".*\\d.*".toRegex()) }
+					.map { it.toLowerCase(Locale.getDefault()).trim('_') }
+					.filterNot { it.matches("(.)\\1+".toRegex()) }
+					.forEach {
+						context.write(this.key.apply { set(it) }, this.value)
+					}
+		}
 	}
 
 	class AnagramReducer : Reducer<Text, IntWritable, Text, IntWritable>() {
 		private val result = IntWritable()
 
-		override fun reduce(key: Text, values: MutableIterable<IntWritable>, context: Context): Unit {
+		override fun reduce(key: Text, values: MutableIterable<IntWritable>, context: Context) {
 			val sum = values.fold(0) { acc, intWritable -> acc + intWritable.get() }
 			result.set(sum)
 			context.write(key, result)
