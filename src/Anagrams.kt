@@ -4,20 +4,19 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.io.ArrayWritable
 import org.apache.hadoop.io.LongWritable
 import org.apache.hadoop.io.Text
-import org.apache.hadoop.mapreduce.Job
-import org.apache.hadoop.mapreduce.Mapper
-import org.apache.hadoop.mapreduce.Reducer
+import org.apache.hadoop.mapreduce.*
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat
 import org.apache.hadoop.util.Tool
 import org.apache.hadoop.util.ToolRunner
+import java.io.DataOutputStream
 import java.util.*
 import kotlin.system.exitProcess
 
 class Anagrams : Configured(), Tool {
-	class AnagramMapper : Mapper<LongWritable, Text, Text, ArrayWritable>() {
+	class AnagramMapper : Mapper<LongWritable, Text, Text, TextArrayWritable>() {
 		private val keyOut = Text()
 		private val valOut = TextArrayWritable()
 		private val valString = Text()
@@ -80,7 +79,7 @@ class Anagrams : Configured(), Tool {
 						outputKeyClass = Text::class.java
 						outputValueClass = TextArrayWritable::class.java
 
-						outputFormatClass = TextOutputFormat::class.java
+						outputFormatClass = AnagramOutput::class.java
 					}
 					.also {
 						FileInputFormat.addInputPath(it, input)
@@ -95,6 +94,21 @@ class Anagrams : Configured(), Tool {
 					.let {
 						if (it.waitForCompletion(true)) 0 else 1
 					}
+
+	companion object {
+		class AnagramOutput<K, V>() : TextOutputFormat<K, V>() {
+			override fun getRecordWriter(job: TaskAttemptContext): RecordWriter<K, V> =
+					AnagramLineOutput(getDefaultWorkFile(job, "txt").let {
+						it.getFileSystem(job.configuration).create(it, true)
+					})
+
+			private inner class AnagramLineOutput(out: DataOutputStream) : LineRecordWriter<K, V>(out, "") {
+				override fun write(key: K, value: V) {
+					super.write(key, value)
+				}
+			}
+		}
+	}
 }
 
 fun main(vararg args: String): Unit = exitProcess(ToolRunner.run(Anagrams(), args))
