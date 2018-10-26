@@ -44,40 +44,49 @@ class Anagrams : Configured(), Tool {
 		}
 	}
 
-	override fun run(vararg args: String): Int {
-		if (args.size != 2) {
-			ToolRunner.printGenericCommandUsage(System.err)
-			RuntimeException("Usage: ${this::class.simpleName} <input> <output>")
-			return -1
-		}
-		return run(Path(args[0]), Path(args[1]))
-	}
+	override fun run(vararg args: String) =
+			try {
+				run(Path(args[0]), Path(args[1]))
+			} catch (e: Exception) {
+				when (e) {
+					is IllegalArgumentException, is ArrayIndexOutOfBoundsException -> {
+						ToolRunner.printGenericCommandUsage(System.err)
+						RuntimeException("Usage: ${this::class.simpleName} <input> <output>")
+						-1
+					}
+					else -> throw e
+				}
+			}
 
-	private fun run(input: Path, output: Path): Int {
-		val job = Job.getInstance(conf, this::class.simpleName).apply {
-			setJarByClass(this@Anagrams::class.java)
+	private fun run(input: Path, output: Path): Int =
+			Job.getInstance(conf, this::class.simpleName)
+					.apply {
+						setJarByClass(this@Anagrams::class.java)
 
-			mapperClass = Anagrams.AnagramMapper::class.java
-			reducerClass = Anagrams.AnagramReducer::class.java
-			numReduceTasks = 1
+						mapperClass = Anagrams.AnagramMapper::class.java
+						reducerClass = Anagrams.AnagramReducer::class.java
+						numReduceTasks = 1
 
-			inputFormatClass = TextInputFormat::class.java
+						inputFormatClass = TextInputFormat::class.java
 
-			outputKeyClass = Text::class.java
-			outputValueClass = IntWritable::class.java
+						outputKeyClass = Text::class.java
+						outputValueClass = IntWritable::class.java
 
-			outputFormatClass = TextOutputFormat::class.java
-		}
-
-		FileInputFormat.addInputPath(job, input)
-		FileOutputFormat.setOutputPath(job, output)
-
-		FileSystem.get(conf).apply {
-			if (exists(output)) delete(output, true)
-		}
-
-		return if (job.waitForCompletion(true)) 0 else 1
-	}
+						outputFormatClass = TextOutputFormat::class.java
+					}
+					.also {
+						FileInputFormat.addInputPath(it, input)
+						FileOutputFormat.setOutputPath(it, output
+								.also { path ->
+									FileSystem.get(conf)
+											.apply {
+												if (exists(path)) delete(path, true)
+											}
+								})
+					}
+					.let {
+						if (it.waitForCompletion(true)) 0 else 1
+					}
 }
 
 fun main(vararg args: String): Unit = exitProcess(ToolRunner.run(Anagrams(), args))
