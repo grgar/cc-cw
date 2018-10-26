@@ -1,7 +1,8 @@
 import org.apache.hadoop.conf.Configured
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
-import org.apache.hadoop.io.IntWritable
+import org.apache.hadoop.io.ArrayWritable
+import org.apache.hadoop.io.LongWritable
 import org.apache.hadoop.io.Text
 import org.apache.hadoop.mapreduce.Job
 import org.apache.hadoop.mapreduce.Mapper
@@ -16,32 +17,39 @@ import java.util.*
 import kotlin.system.exitProcess
 
 class Anagrams : Configured(), Tool {
-	class AnagramMapper : Mapper<Any, Text, Text, IntWritable>() {
-		private val key = Text()
-		private val value = IntWritable(1)
+	class AnagramMapper : Mapper<LongWritable, Text, Text, ArrayWritable>() {
+		private val keyOut = Text()
+		private val valOut = TextArrayWritable()
+		private val valString = Text()
+		override fun map(key: LongWritable, value: Text, context: Context) = value
+				.toString()
+				.split("[^\\w]".toRegex())
+				.asSequence()
+				.filterNot { it.length == 1 || it.matches(".*\\d.*".toRegex()) }
+				.map { it.toLowerCase(Locale.getDefault()).trim('_') }
+				.filter { it.matches("\\w+".toRegex()) }
+				.filterNot { it.matches("(.)\\1+".toRegex()) }
+				.forEach {
+					val chars = it.toCharArray().sortedArray().joinToString(separator = "")
+					context.write(keyOut.apply { set(chars) }, TextArrayWritable().apply { set(arrayOf(Text(it))) })
+				}
+	}
 
-		override fun map(key: Any, value: Text, context: Context) {
-			value
-					.toString()
-					.split("[^\\w]".toRegex())
-					.asSequence()
-					.filterNot { it.length == 1 || it.matches(".*\\d.*".toRegex()) }
-					.map { it.toLowerCase(Locale.getDefault()).trim('_') }
-					.filterNot { it.matches("(.)\\1+".toRegex()) }
-					.forEach {
-						context.write(this.key.apply { set(it) }, this.value)
-					}
+	class AnagramReducer : Reducer<Text, TextArrayWritable, Text, TextArrayWritable>() {
+		override fun reduce(key: Text, values: MutableIterable<TextArrayWritable>, context: Context) {
+			context.write(key, values.reduce { acc, cur ->
+				val list = (acc.toStrings() + cur.toStrings()).toSortedSet().toTypedArray()
+				TextArrayWritable(list)
+			})
 		}
 	}
 
-	class AnagramReducer : Reducer<Text, IntWritable, Text, IntWritable>() {
-		private val result = IntWritable()
+	class TextArrayWritable : ArrayWritable {
+		constructor() : super(Text::class.java)
+		constructor(array: Array<String>) : super(array)
+		constructor(string: String) : super(arrayOf(string))
 
-		override fun reduce(key: Text, values: MutableIterable<IntWritable>, context: Context) {
-			val sum = values.fold(0) { acc, intWritable -> acc + intWritable.get() }
-			result.set(sum)
-			context.write(key, result)
-		}
+		override fun toString() = toStrings()?.contentDeepToString() ?: ""
 	}
 
 	override fun run(vararg args: String) =
@@ -70,7 +78,7 @@ class Anagrams : Configured(), Tool {
 						inputFormatClass = TextInputFormat::class.java
 
 						outputKeyClass = Text::class.java
-						outputValueClass = IntWritable::class.java
+						outputValueClass = TextArrayWritable::class.java
 
 						outputFormatClass = TextOutputFormat::class.java
 					}
