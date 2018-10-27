@@ -1,3 +1,5 @@
+package com.georgegarside.coc105.anagrams
+
 import org.apache.hadoop.conf.Configured
 import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
@@ -22,15 +24,13 @@ class Anagrams : Configured(), Tool {
 		private val valString = Text()
 		override fun map(key: LongWritable, value: Text, context: Context) = value
 				.toString()
-				.split("[^\\w]".toRegex())
+				.split("[^\\w'’-]|--|_".toRegex())
 				.asSequence()
-				.filterNot { it.length == 1 || it.matches(".*\\d.*".toRegex()) }
-				.map { it.toLowerCase(Locale.getDefault()).trim('_') }
-				.filter { it.matches("\\w+".toRegex()) }
-				.filterNot { it.matches("(.)\\1+".toRegex()) }
-				.forEach {
-					val chars = it.toCharArray().sortedArray().joinToString(separator = "")
-					context.write(keyOut.apply { set(chars) }, TextArrayWritable().apply { set(arrayOf(Text(it))) })
+				.filterNot { it.length == 1 || it.matches(".*\\d.*|(.)\\1+".toRegex()) }
+				.map { it.toLowerCase(Locale.getDefault()) }
+				.forEach { word ->
+					val chars = word.toCharArray().sortedArray().filterNot { c -> c == '-' || c == '\'' || c == '’' }.joinToString(separator = "")
+					context.write(keyOut.apply { set(chars) }, valOut.apply { set(arrayOf(valString.apply { set(word) })) })
 				}
 	}
 
@@ -96,7 +96,7 @@ class Anagrams : Configured(), Tool {
 					}
 
 	companion object {
-		class AnagramOutput<K, V>() : TextOutputFormat<K, V>() {
+		class AnagramOutput<K, V> : TextOutputFormat<K, V>() {
 			override fun getRecordWriter(job: TaskAttemptContext): RecordWriter<K, V> =
 					AnagramLineOutput(getDefaultWorkFile(job, "txt").let {
 						it.getFileSystem(job.configuration).create(it, true)
@@ -104,7 +104,9 @@ class Anagrams : Configured(), Tool {
 
 			private inner class AnagramLineOutput(out: DataOutputStream) : LineRecordWriter<K, V>(out, "") {
 				override fun write(key: K, value: V) {
-					super.write(key, value)
+					// .get() outperforms .toStrings() and .toArray(), per implementation operations
+					if (value is ArrayWritable && value.get().size == 1) return
+					super.write(null, value)
 				}
 			}
 		}
