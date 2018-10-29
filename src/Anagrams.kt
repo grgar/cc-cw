@@ -16,7 +16,6 @@ import org.apache.hadoop.util.ToolRunner
 import java.io.DataInput
 import java.io.DataOutput
 import java.io.DataOutputStream
-import java.util.*
 import kotlin.system.exitProcess
 
 class Anagrams : Configured(), Tool {
@@ -28,43 +27,51 @@ class Anagrams : Configured(), Tool {
 				.split("[^\\w'’-]|--|_".toRegex())
 				.asSequence()
 				.filterNot { it.length == 1 || it.matches(".*\\d.*|(.)\\1+".toRegex()) }
-				.map { it.toLowerCase(Locale.getDefault()) }
+				.map { it.trim('\'', '’', '-') }
 				.forEach { word ->
-					val chars = word.toCharArray().sortedArray().filterNot { c -> c == '-' || c == '\'' || c == '’' }.joinToString(separator = "")
-					context.write(keyOut.apply { set(chars) }, valOut.apply { values = setOf(word) })
+
+					keyOut.set(word.toCharArray().sortedArray().filterNot { c -> c == '-' || c == '\'' || c == '’' }.joinToString(separator = "").toLowerCase())
+
+					valOut.value =
+							if (word.matches("[A-Z'’-]+".toRegex())) {
+								setOf(word.toLowerCase())
+							} else {
+								setOf(word)
+							}
+
+					context.write(keyOut, valOut)
 				}
 	}
 
 	class AnagramReducer : Reducer<Text, SetWritable, Text, SetWritable>() {
 		override fun reduce(key: Text, values: MutableIterable<SetWritable>, context: Context) {
 			context.write(key, values.reduce { acc, cur ->
-				val vals = (acc.values + cur.values)
-				SetWritable(vals)
+				cur.value.fold(acc.value) { set, s ->
+					set.firstOrNull { it.replace("['’-]".toRegex(), "").toLowerCase() == s }?.let { set - it + s }
+							?: if (set.contains(s.replace("['’-]".toRegex(), "").toLowerCase())) set else set + s
+				}.let {
+					SetWritable(it)
+				}
 			})
 		}
 	}
 
-	class SetWritable(var values: Set<String>) : Writable {
+	class SetWritable(var value: Set<String>) : Writable {
 		constructor() : this(setOf())
 
 		override fun readFields(input: DataInput) {
 			val size = input.readInt()
-			values = (0 until size).fold(setOf()) { acc, _ ->
+			value = (0 until size).fold(setOf()) { acc, _ ->
 				acc + input.readUTF()
 			}
 		}
 
 		override fun write(output: DataOutput) {
-			output.writeInt(values.size)
-			values.forEach { output.writeUTF(it) }
+			output.writeInt(value.size)
+			value.forEach { output.writeUTF(it) }
 		}
 
-		operator fun plus(other: SetWritable): SetWritable {
-			values += other.values
-			return this
-		}
-
-		override fun toString() = values.joinToString(prefix = "{ ", separator = ", ", postfix = " }")
+		override fun toString() = value.joinToString(prefix = "{ ", separator = ", ", postfix = " }")
 	}
 
 	override fun run(vararg args: String) =
@@ -87,8 +94,8 @@ class Anagrams : Configured(), Tool {
 						setJarByClass(this@Anagrams::class.java)
 
 						mapperClass = Anagrams.AnagramMapper::class.java
+						combinerClass = Anagrams.AnagramReducer::class.java
 						reducerClass = Anagrams.AnagramReducer::class.java
-						numReduceTasks = 1
 
 						inputFormatClass = TextInputFormat::class.java
 
@@ -120,7 +127,7 @@ class Anagrams : Configured(), Tool {
 
 			private inner class AnagramLineOutput(out: DataOutputStream) : LineRecordWriter<K, V>(out, "") {
 				override fun write(key: K, value: V) {
-					if (value is SetWritable && value.values.size == 1) return
+					if (value is SetWritable && value.value.size == 1) return
 					super.write(null, value)
 				}
 			}
