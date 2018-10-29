@@ -24,13 +24,13 @@ class Anagrams : Configured(), Tool {
 		private val valOut = SetWritable()
 		override fun map(key: LongWritable, value: Text, context: Context) = value
 				.toString()
-				.split("[^\\w'’-]|--|_".toRegex())
+				.split(" |--|_".toRegex())
 				.asSequence()
-				.filterNot { it.length == 1 || it.matches(".*\\d.*|(.)\\1+".toRegex()) }
-				.map { it.trim('\'', '’', '-') }
+				.map { """[\pL\p{Mn}][\pL\p{Mn}'’-]+[\pL\p{Mn}]""".toRegex(RegexOption.IGNORE_CASE).find(it)?.value ?: "" }
+				.filterNot { it.length <= 1 || it.matches(".*\\d.*|(.)\\1+".toRegex()) }
 				.forEach { word ->
 
-					keyOut.set(word.toCharArray().sortedArray().filterNot { c -> c == '-' || c == '\'' || c == '’' }.joinToString(separator = "").toLowerCase())
+					keyOut.set(word.toLowerCase().toCharArray().sortedArray().filterNot { c -> c == '-' || c == '\'' || c == '’' }.joinToString(separator = ""))
 
 					valOut.value =
 							if (word.matches("[A-Z'’-]+".toRegex())) {
