@@ -1,7 +1,6 @@
 package com.georgegarside.coc105.anagrams
 
 import org.apache.hadoop.conf.Configured
-import org.apache.hadoop.fs.FileSystem
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.io.LongWritable
 import org.apache.hadoop.io.Text
@@ -26,14 +25,18 @@ class Anagrams : Configured(), Tool {
 				.toString()
 				.split(" |--|_".toRegex())
 				.asSequence()
-				.map { """[\pL\p{Mn}][\pL\p{Mn}'’-]+[\pL\p{Mn}]""".toRegex(RegexOption.IGNORE_CASE).find(it)?.value ?: "" }
+				.map {
+					"""[\pL\p{Mn}][\pL\p{Mn}$wordJoiners]+[\pL\p{Mn}]""".toRegex(RegexOption.IGNORE_CASE)
+							.find(it)?.value
+							?: ""
+				}
 				.filterNot { it.length <= 1 || it.matches(".*\\d.*|(.)\\1+".toRegex()) }
 				.forEach { word ->
 
-					keyOut.set(word.toLowerCase().toCharArray().sortedArray().filterNot { c -> c == '-' || c == '\'' || c == '’' }.joinToString(separator = ""))
+					keyOut.set(word.toLowerCase().toCharArray().sortedArray().filterNot { c -> wordJoiners.toCharArray().any { it == c } }.joinToString(separator = ""))
 
 					valOut.value =
-							if (word.matches("[A-Z'’-]+".toRegex())) {
+							if (word.toCharArray().asSequence().filter { it.isUpperCase() }.toList().size > 1) {
 								setOf(word.toLowerCase())
 							} else {
 								setOf(word)
@@ -47,8 +50,16 @@ class Anagrams : Configured(), Tool {
 		override fun reduce(key: Text, values: MutableIterable<SetWritable>, context: Context) {
 			context.write(key, values.reduce { acc, cur ->
 				cur.value.fold(acc.value) { set, s ->
-					set.firstOrNull { it.replace("['’-]".toRegex(), "").toLowerCase() == s }?.let { set - it + s }
-							?: if (set.contains(s.replace("['’-]".toRegex(), "").toLowerCase())) set else set + s
+
+					// { Abc }, abc (lowercase of existing word) -> { abc } (remove Abc and add abc)
+					set.firstOrNull { it.toLowerCase() == s }?.let { set - it + s } ?:
+
+					// { abc }, Abc (uppercase of existing word) -> { abc } (leave set as existing)
+					set.firstOrNull { it == s.toLowerCase() }?.let { set } ?:
+
+					// { abc }, cab (word does not exist) -> { abc, cab } (merge sets)
+					set+s
+
 				}.let {
 					SetWritable(it)
 				}
@@ -74,19 +85,7 @@ class Anagrams : Configured(), Tool {
 		override fun toString() = value.joinToString(prefix = "{ ", separator = ", ", postfix = " }")
 	}
 
-	override fun run(vararg args: String) =
-			try {
-				run(Path(args[0]), Path(args[1]))
-			} catch (e: Exception) {
-				when (e) {
-					is IllegalArgumentException, is ArrayIndexOutOfBoundsException -> {
-						ToolRunner.printGenericCommandUsage(System.err)
-						RuntimeException("Usage: ${this::class.simpleName} <input> <output>")
-						-1
-					}
-					else -> throw e
-				}
-			}
+	override fun run(vararg args: String) = run(Path(args[0]), Path(args[1]))
 
 	private fun run(input: Path, output: Path): Int =
 			Job.getInstance(conf, this::class.simpleName)
@@ -106,19 +105,15 @@ class Anagrams : Configured(), Tool {
 					}
 					.also {
 						FileInputFormat.addInputPath(it, input)
-						FileOutputFormat.setOutputPath(it, output
-								.also { path ->
-									FileSystem.get(conf)
-											.apply {
-												if (exists(path)) delete(path, true)
-											}
-								})
+						FileOutputFormat.setOutputPath(it, output)
 					}
 					.let {
 						if (it.waitForCompletion(true)) 0 else 1
 					}
 
 	companion object {
+		const val wordJoiners = "'’-"
+
 		class AnagramOutput<K, V> : TextOutputFormat<K, V>() {
 			override fun getRecordWriter(job: TaskAttemptContext): RecordWriter<K, V> =
 					AnagramLineOutput(getDefaultWorkFile(job, ".txt").let {
