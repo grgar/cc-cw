@@ -46,6 +46,12 @@ class Anagrams : Configured(), Tool {
 				}
 	}
 
+	class AnagramPartitioner : Partitioner<Text, SetWritable>() {
+		override fun getPartition(text: Text, set: SetWritable, partitions: Int): Int {
+			return text.length % partitions
+		}
+	}
+
 	class AnagramReducer : Reducer<Text, SetWritable, Text, SetWritable>() {
 		override fun reduce(key: Text, values: MutableIterable<SetWritable>, context: Context) {
 			context.write(key, values.reduce { acc, cur ->
@@ -93,6 +99,7 @@ class Anagrams : Configured(), Tool {
 						setJarByClass(this@Anagrams::class.java)
 
 						mapperClass = Anagrams.AnagramMapper::class.java
+						partitionerClass = Anagrams.AnagramPartitioner::class.java
 						combinerClass = Anagrams.AnagramReducer::class.java
 						reducerClass = Anagrams.AnagramReducer::class.java
 
