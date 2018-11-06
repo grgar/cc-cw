@@ -58,10 +58,12 @@ class Anagrams : Configured(), Tool {
 				cur.value.fold(acc.value) { set, s ->
 
 					// { Abc }, abc (lowercase of existing word) -> { abc } (remove Abc and add abc)
-					set.firstOrNull { it.toLowerCase() == s }?.let { set - it + s } ?:
+					set.find { it.toLowerCase() == s || it.replace("""[$wordJoiners]""".toRegex(), "") == s }
+							?.let { set - it + s } ?:
 
 					// { abc }, Abc (uppercase of existing word) -> { abc } (leave set as existing)
-					set.firstOrNull { it == s.toLowerCase() }?.let { set } ?:
+					set.firstOrNull { it == s.toLowerCase() || it == s.replace("""[$wordJoiners]""".toRegex(), "") }
+							?.let { set } ?:
 
 					// { abc }, cab (word does not exist) -> { abc, cab } (merge sets)
 					set+s
