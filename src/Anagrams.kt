@@ -16,30 +16,58 @@ import java.io.DataInput
 import java.io.DataOutput
 import java.io.DataOutputStream
 import kotlin.system.exitProcess
+import kotlin.system.measureTimeMillis
 
 class Anagrams : Configured(), Tool {
 	class AnagramMapper : Mapper<LongWritable, Text, Text, SetWritable>() {
-		private val keyOut = Text()
-		private val valOut = SetWritable()
-		override fun map(key: LongWritable, value: Text, context: Context) = value
+		private var keyOut = Text()
+		private var valOut = SetWritable()
+
+		var Text.value: String
+			get() = toString()
+			set(value) = set(value)
+
+		public override fun map(key: LongWritable, value: Text, context: Context) = value
 				.toString()
 				.split(" |--|_".toRegex())
 				.asSequence()
 				.map {
-					"""[\pL\p{Mn}][\pL\p{Mn}$wordJoiners]+[\pL\p{Mn}]""".toRegex(RegexOption.IGNORE_CASE)
-							.find(it)?.value
+					"""[\pL\p{Mn}][\pL\p{Mn}$wordJoiners]+[\pL\p{Mn}]"""
+							.toRegex(RegexOption.IGNORE_CASE)
+							.find(it)
+							?.value
 							?: ""
 				}
-				.filterNot { it.length <= 1 || it.matches(".*\\d.*|(.)\\1+".toRegex()) }
+				.filterNot { it.length <= 1 || it.matches(""".*\d.*|(.)\1+""".toRegex()) }
+				.also { print("${it.toList().size}, ") }
 				.forEach { word ->
 
-					keyOut.set(word.toLowerCase().toCharArray().sortedArray().filterNot { c -> wordJoiners.toCharArray().any { it == c } }.joinToString(separator = ""))
+					word
+							.toLowerCase()
+							.toCharArray()
+							.sortedArray()
+							.filterNot { c ->
+								wordJoiners
+										.toCharArray()
+										.any { it == c }
+							}
+							.joinToString(separator = "")
+							.let {
+								keyOut.value = it
+							}
 
-					valOut.value =
-							if (word.toCharArray().asSequence().filter { it.isUpperCase() }.toList().size > 1) {
-								setOf(word.toLowerCase())
-							} else {
-								setOf(word)
+					word
+							.toCharArray()
+							.asSequence()
+							.filter { it.isUpperCase() }
+							.toList()
+							.let {
+								valOut.value =
+										if (it.size > 1) {
+											setOf(word.toLowerCase())
+										} else {
+											setOf(word)
+										}
 							}
 
 					context.write(keyOut, valOut)
@@ -54,43 +82,54 @@ class Anagrams : Configured(), Tool {
 
 	class AnagramReducer : Reducer<Text, SetWritable, Text, SetWritable>() {
 		override fun reduce(key: Text, values: MutableIterable<SetWritable>, context: Context) {
-			context.write(key, values.reduce { acc, cur ->
-				cur.value.fold(acc.value) { set, s ->
+			context.write(key, SetWritable(values.fold(setOf()) { acc, setWritable ->
+				anagramWith(acc, setWritable.value)
+			}))
+		}
 
-					// { Abc }, abc (lowercase of existing word) -> { abc } (remove Abc and add abc)
-					set.find { it.toLowerCase() == s || it.replace("""[$wordJoiners]""".toRegex(), "") == s }
-							?.let { set - it + s } ?:
+		fun anagramWith(left: Set<String>, right: Set<String>) = right.fold(left) { set, s ->
+			// { Abc }, abc (lowercase of existing word) -> { abc } (remove Abc and add abc)
+			set.find { it.toLowerCase() == s || it.replace("""[$wordJoiners]""".toRegex(), "") == s }
+					?.let { set - it + s } ?:
 
-					// { abc }, Abc (uppercase of existing word) -> { abc } (leave set as existing)
-					set.firstOrNull { it == s.toLowerCase() || it == s.replace("""[$wordJoiners]""".toRegex(), "") }
-							?.let { set } ?:
+			// { Foo }, Fo'o (apostrophe of existing word) -> { Foo } (leave set as existing)
+			set.find { it == s.replace("""[$wordJoiners]""".toRegex(), "") }
+					?.let { set } ?:
 
-					// { abc }, cab (word does not exist) -> { abc, cab } (merge sets)
-					set+s
+			// { Fo'o }, foo (lowercase and no apostrophe of existing word) -> { foo } (remove Fo'o and add foo)
+			set.find { it.replace("""[$wordJoiners]""".toRegex(), "").toLowerCase() == s.toLowerCase() }
+					?.let { set - it + s.toLowerCase() } ?:
 
-				}.let {
-					SetWritable(it)
-				}
-			})
+			// { foo }, Fo'o (uppercase and apostrophe of existing word) -> { foo } (leave set as existing)
+			set.find { it.toLowerCase() == s.replace("""[$wordJoiners]""".toRegex(), "").toLowerCase() }
+					?.let { set - it + s.replace("""[$wordJoiners]""".toRegex(), "").toLowerCase() } ?:
+
+			// { abc }, Abc (uppercase of existing word) -> { abc } (leave set as existing)
+			set.firstOrNull { it == s.toLowerCase() || it == s.replace("""[$wordJoiners]""".toRegex(), "") }
+					?.let { set } ?:
+
+			// { abc }, cab (word does not exist) -> { abc, cab } (merge sets)
+			set+s
 		}
 	}
 
 	class SetWritable(var value: Set<String>) : Writable {
 		constructor() : this(setOf())
 
-		override fun readFields(input: DataInput) {
-			val size = input.readInt()
-			value = (0 until size).fold(setOf()) { acc, _ ->
-				acc + input.readUTF()
-			}
-		}
+		override fun readFields(input: DataInput): Unit =
+				(0 until input.readInt())
+						.fold<Int, Set<String>>(setOf()) { acc, _ ->
+							acc + input.readUTF()
+						}
+						.let { value = it }
 
-		override fun write(output: DataOutput) {
-			output.writeInt(value.size)
-			value.forEach { output.writeUTF(it) }
-		}
+		override fun write(output: DataOutput) =
+				value
+						.also { output.writeInt(it.size) }
+						.forEach { output.writeUTF(it) }
 
-		override fun toString() = value.joinToString(prefix = "{ ", separator = ", ", postfix = " }")
+		override fun toString() =
+				value.joinToString(prefix = "{ ", separator = ", ", postfix = " }")
 	}
 
 	override fun run(vararg args: String) = run(Path(args[0]), Path(args[1]))
@@ -102,7 +141,6 @@ class Anagrams : Configured(), Tool {
 
 						mapperClass = Anagrams.AnagramMapper::class.java
 						partitionerClass = Anagrams.AnagramPartitioner::class.java
-						combinerClass = Anagrams.AnagramReducer::class.java
 						reducerClass = Anagrams.AnagramReducer::class.java
 
 						inputFormatClass = TextInputFormat::class.java
@@ -116,8 +154,16 @@ class Anagrams : Configured(), Tool {
 						FileInputFormat.addInputPath(it, input)
 						FileOutputFormat.setOutputPath(it, output)
 					}
-					.let {
-						if (it.waitForCompletion(true)) 0 else 1
+					.let { job ->
+						println(measureTimeMillis { job.waitForCompletion(true) })
+						println(job.finishTime)
+						/*
+						if (job.waitForCompletion(false)) (0)
+								.also {
+									println("Job execution took ${job.finishTime - job.startTime}")
+								}
+						else 1*/
+						0
 					}
 
 	companion object {
