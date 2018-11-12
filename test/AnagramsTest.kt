@@ -8,9 +8,9 @@ import kotlin.test.assertEquals
  */
 internal class AnagramsTest {
 	/**
-	 * [Anagrams.AnagramReducer.anagramWith].
+	 * [Anagrams.AnagramReducer.anagram].
 	 */
-	private fun fold(left: Set<String>, right: Set<String>) = Anagrams.AnagramReducer().anagramWith(left, right)
+	private fun fold(left: Set<String>, right: Set<String>) = Anagrams.AnagramReducer().anagram(left, right)
 
 	/**
 	 * [fold] converting additional [String] to single element [Set].
@@ -80,7 +80,7 @@ internal class AnagramsTest {
 
 	@Test
 	internal fun `apostrophe differs`() {
-		sets("f'oo" and "fo'o", "f'oo" with "fo'o")
+		sets("foo", "f'oo" with "fo'o")
 	}
 
 	@Test
@@ -135,5 +135,35 @@ internal class AnagramsTest {
 		sets("foo", "fo'o" with "Foo" with "foo")
 		sets("foo", "fo'o" with "foo" with "Foo")
 		sets("foo", "Foo" with "fo'o" with "foo")
+	}
+
+	@Test
+	internal fun `both apostrophe and hyphen keeping both`() {
+		sets("f-o'o", "f-o'o" with "f-o'o")
+	}
+
+	@Test
+	internal fun `both apostrophe and hyphen one capital keeping apostrophe`() {
+		sets("f-o'o", "f-o'o" with "F-o'o")
+		sets("f-o'o", "F-o'o" with "f-o'o")
+	}
+
+	@Test
+	internal fun `one apostrophe one hyphen keeping without`() {
+		sets("foo", "fo'o" with "f-oo")
+		sets("foo", "f'oo" with "f-oo")
+	}
+
+	@Test
+	internal fun `multiple apostrophe matching`() {
+		sets("foo", "f'o'o" with "fo'o")
+		sets("foo", "f'oo" with "fo'o")
+	}
+
+	@Test
+	internal fun `multiple separated hyphens`() {
+		sets("foo", "f'o'o" with "f-oo")
+		sets("foo", "f'oo" with "f-o-o")
+		sets("foo", "f'oo" with "f-o-o")
 	}
 }

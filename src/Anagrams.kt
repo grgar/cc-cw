@@ -32,29 +32,21 @@ class Anagrams : Configured(), Tool {
 				.split(" |--|_".toRegex())
 				.asSequence()
 				.map {
-					"""[\pL\p{Mn}][\pL\p{Mn}$wordJoiners]+[\pL\p{Mn}]"""
+					"""[\pL\p{Mn}][\pL\p{Mn}$wordJoiners]*[\pL\p{Mn}]"""
 							.toRegex(RegexOption.IGNORE_CASE)
 							.find(it)
 							?.value
 							?: ""
 				}
 				.filterNot { it.length <= 1 || it.matches(""".*\d.*|(.)\1+""".toRegex()) }
-				.also { print("${it.toList().size}, ") }
 				.forEach { word ->
 
-					word
+					keyOut.value = word
 							.toLowerCase()
+							.filterNot { c -> wordJoiners.any { joiner -> c == joiner } }
 							.toCharArray()
 							.sortedArray()
-							.filterNot { c ->
-								wordJoiners
-										.toCharArray()
-										.any { it == c }
-							}
 							.joinToString(separator = "")
-							.let {
-								keyOut.value = it
-							}
 
 					word
 							.toCharArray()
@@ -83,11 +75,36 @@ class Anagrams : Configured(), Tool {
 	class AnagramReducer : Reducer<Text, SetWritable, Text, SetWritable>() {
 		override fun reduce(key: Text, values: MutableIterable<SetWritable>, context: Context) {
 			context.write(key, SetWritable(values.fold(setOf()) { acc, setWritable ->
-				anagramWith(acc, setWritable.value)
+				acc anagramWith setWritable.value
 			}))
 		}
 
-		fun anagramWith(left: Set<String>, right: Set<String>) = right.fold(left) { set, s ->
+		infix fun Set<String>.anagramWith(right: Set<String>) = anagram(this, right)
+
+		data class Stats(val upper: Int, val joiner: Int) : Comparable<Stats> {
+			/**
+			 * Compares this object with the specified object for order. Returns zero if this object is equal
+			 * to the specified [other] object, a negative number if it's less than [other], or a positive number
+			 * if it's greater than [other].
+			 */
+			override fun compareTo(other: Stats) =
+					joiner.compareTo(other.joiner).let { if (it != 0) it else upper.compareTo(other.upper) }
+		}
+
+		fun String.stats() = Stats(
+				upper = count { char -> char.isUpperCase() },
+				joiner = count { char -> wordJoiners.toCharArray().any { joinerChar -> char == joinerChar } }
+		)
+
+		val joinedPositions = { word: String ->
+			"""[$wordJoiners]""".toRegex()
+					.findAll(word)
+					.fold(setOf<Pair<Int, Char>>()) { acc, matchResult ->
+						acc + (matchResult.range.first to matchResult.value.first())
+					}
+		}
+
+		fun anagram(left: Set<String>, right: Set<String>) = right.fold(left) { set, s ->
 			// { Abc }, abc (lowercase of existing word) -> { abc } (remove Abc and add abc)
 			set.find { it.toLowerCase() == s || it.replace("""[$wordJoiners]""".toRegex(), "") == s }
 					?.let { set - it + s } ?:
@@ -107,6 +124,17 @@ class Anagrams : Configured(), Tool {
 			// { abc }, Abc (uppercase of existing word) -> { abc } (leave set as existing)
 			set.firstOrNull { it == s.toLowerCase() || it == s.replace("""[$wordJoiners]""".toRegex(), "") }
 					?.let { set } ?:
+
+			// { fo'o }, f-oo (same word, differing with word joiners) -> {remove all word joiners and return original word}
+			// { abc }, abc (word already exists as is) -> { abc } (leave set as existing)
+			set.firstOrNull { it.replace("""[$wordJoiners]""".toRegex(), "").toLowerCase() == s.replace("""[$wordJoiners]""".toRegex(), "").toLowerCase() }
+					?.let {
+						if (joinedPositions(it) == joinedPositions(s)) {
+							set
+						} else {
+							set - it + s.replace("""[$wordJoiners]""".toRegex(), "")
+						}
+					} ?:
 
 			// { abc }, cab (word does not exist) -> { abc, cab } (merge sets)
 			set+s
@@ -156,13 +184,6 @@ class Anagrams : Configured(), Tool {
 					}
 					.let { job ->
 						println(measureTimeMillis { job.waitForCompletion(true) })
-						println(job.finishTime)
-						/*
-						if (job.waitForCompletion(false)) (0)
-								.also {
-									println("Job execution took ${job.finishTime - job.startTime}")
-								}
-						else 1*/
 						0
 					}
 
